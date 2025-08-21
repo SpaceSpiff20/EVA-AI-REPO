@@ -2,102 +2,79 @@ import pygame # Import pygame library for handling audio playback.
 import random # Import random for generating random choices.
 import asyncio # Import asyncio for asynchronous operations.
 import os # Import os for file path handling.
+from dotenv import dotenv_values # import dotenv for reading environment variables from a .env file.
 from speechify import Speechify
 from speechify.tts import GetSpeechOptionsRequest
-from dotenv import dotenv_values # import dotenv for reading environment variables from a .env file.
+import base64
 
 # load environment variables from a .env file.
 env_vars = dotenv_values(".env")
 AssistantVoice = env_vars.get("AssistantVoice")  # Get the assistant's voice from the environment variables.
-SpeechifyToken = env_vars.get("SpeechifyToken")  # Get the Speechify API token
-
-# Speechify configuration
-DEFAULT_VOICE_ID = "voice_id"  # Default voice ID - should be configured in .env
-DEFAULT_MODEL = "simba-english"  # Default model
-DEFAULT_LANGUAGE = "en-US"  # Default language
+SpeechifyToken = env_vars.get("SpeechifyToken")  # Get the Speechify API token from environment variables.
 
 # Initialize Speechify client
 def get_speechify_client():
-    """Get Speechify client instance"""
+    """Initialize and return Speechify client with API token."""
     if not SpeechifyToken:
-        raise Exception("SpeechifyToken not configured in .env file")
+        raise ValueError("SpeechifyToken not found in environment variables")
     return Speechify(token=SpeechifyToken)
 
-def get_available_voices():
-    """Get available voices from Speechify API"""
-    if not SpeechifyToken:
-        print("Warning: SpeechifyToken not configured. Using default voice.")
-        return []
-    
-    try:
-        client = get_speechify_client()
-        voices_response = client.tts.voices.list()
-        # The response is directly a list of voice objects
-        return voices_response if isinstance(voices_response, list) else []
-    except Exception as e:
-        print(f"Error getting available voices: {e}")
-        return []
-
-def validate_voice_id(voice_id):
-    """Validate if the voice ID exists in available voices"""
-    if not voice_id:
-        return False
-    
-    available_voices = get_available_voices()
-    voice_ids = [voice.id for voice in available_voices if hasattr(voice, 'id')]
-    return voice_id in voice_ids
-
-# Asynchronous function to convert text to an audio file using Speechify API.
-async def TextToAudioFile(text) -> None:
+# Function to convert text to an audio file using Speechify API.
+def TextToAudioFile(text) -> None:
     file_path = r"Data\speech.mp3"   # Define the path where the speech will be saved.
 
     if os.path.exists(file_path): # Check if the file already exists.
         os.remove(file_path)      # If it exists, remove it to avoid overwriting errors.
 
-    # Validate voice ID
-    voice_id = AssistantVoice if AssistantVoice else DEFAULT_VOICE_ID
-    if not validate_voice_id(voice_id):
-        print(f"Warning: Voice ID '{voice_id}' not found. Using default voice.")
-        voice_id = DEFAULT_VOICE_ID
-
     try:
         # Get Speechify client
         client = get_speechify_client()
         
-        # Create speech options
-        options = GetSpeechOptionsRequest(
-            loudness_normalization=True,
-            text_normalization=True
-        )
+        # Determine language and model based on AssistantVoice
+        # Default to English if no specific language is detected
+        language = "en-US"
+        model = "simba-english"
         
-        # Generate speech using the official SDK
+        # If AssistantVoice contains language codes, extract them
+        if AssistantVoice and "-" in AssistantVoice:
+            # Extract language code from voice (e.g., "en-US-JennyNeural" -> "en-US")
+            voice_parts = AssistantVoice.split("-")
+            if len(voice_parts) >= 2:
+                language = f"{voice_parts[0]}-{voice_parts[1]}"
+        
+        # Use multilingual model for non-English languages
+        if not language.startswith("en"):
+            model = "simba-multilingual"
+        
+        # Generate speech using Speechify API
         audio_response = client.tts.audio.speech(
             audio_format="mp3",
             input=text,
-            language=DEFAULT_LANGUAGE,
-            model=DEFAULT_MODEL,
-            options=options,
-            voice_id=voice_id
+            language=language,
+            model=model,
+            options=GetSpeechOptionsRequest(
+                loudness_normalization=True,
+                text_normalization=True
+            ),
+            voice_id=AssistantVoice if AssistantVoice else "default"
         )
         
-        # Save the audio data to file
-        import base64
+        # Decode the audio data and save to file
         audio_bytes = base64.b64decode(audio_response.audio_data)
+        
         with open(file_path, "wb") as f:
             f.write(audio_bytes)
             
-        print(f"Successfully generated speech for text: {text[:50]}...")
-            
     except Exception as e:
         print(f"Error in TextToAudioFile: {e}")
-        raise e
+        raise
 
 # Function to manage Text-To-Speech (TTS) functionality.
-def TTS (Text, func=lambda r=None: True):
+def TTS(Text, func=lambda r=None: True):
     while True:
         try:
-            # Convert text to an audio file asynchronously.
-            asyncio.run(TextToAudioFile(Text)) 
+            # Convert text to an audio file.
+            TextToAudioFile(Text) 
 
             # Initialize pygame mixer for audio playback.
             pygame.mixer.init()
@@ -115,10 +92,7 @@ def TTS (Text, func=lambda r=None: True):
             return True  # Return True if the audio plays successfully.
         
         except Exception as e:  # Handle any exceptions during the process.
-            print (f"Error in TTS: {e}")
-            # If it's an authentication error, don't retry
-            if "Authentication failed" in str(e):
-                return False
+            print(f"Error in TTS: {e}")
 
         finally:
             try:
@@ -164,46 +138,13 @@ def TextToSpeech(Text, func=lambda r=None: True):
 
     # Otherwise, just play the whole text.
     else:
-        TTS(Text,func)
-
-# Function to test Speechify API connection
-def test_speechify_connection():
-    """Test the Speechify API connection and return available voices"""
-    print("Testing Speechify API connection...")
-    
-    if not SpeechifyToken:
-        print("❌ SpeechifyToken not configured in .env file")
-        return False
-    
-    try:
-        voices = get_available_voices()
-        if voices:
-            print(f"✅ Speechify API connection successful. Found {len(voices)} voices.")
-            print("Available voices:")
-            for voice in voices[:5]:  # Show first 5 voices
-                voice_id = getattr(voice, 'id', 'Unknown')
-                name = getattr(voice, 'display_name', 'No name')
-                print(f"  - {voice_id}: {name}")
-            if len(voices) > 5:
-                print(f"  ... and {len(voices) - 5} more voices")
-            return True
-        else:
-            print("❌ Failed to connect to Speechify API or no voices available")
-            return False
-    except Exception as e:
-        print(f"❌ Error testing Speechify connection: {e}")
-        return False
+        TTS(Text, func)
 
 # Main execution loop
 if __name__ == "__main__":
-    # Test connection first
-    if test_speechify_connection():
-        print("\nStarting TTS test mode...")
-        while True:
-            # Prompt user for input and pass it to Text-To-Speech function.
-            TextToSpeech(input("Enter the text: "))
-    else:
-        print("Please configure SpeechifyToken in your .env file and try again.")
+    while True:
+        # Prompt user for input and pass it to Text-To-Speech function.
+        TextToSpeech(input("Enter the text: "))
 
  
  
