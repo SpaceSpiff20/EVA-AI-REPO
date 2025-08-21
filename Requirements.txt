@@ -12,6 +12,6 @@ googleSearch-python
 selenium
 mtranslate
 pygame
-edge-tts
+speechify-api
 PyQt5
 webdriver-manager
